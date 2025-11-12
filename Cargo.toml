@@ -1,0 +1,111 @@
+[package]
+name = "computers"
+version = "0.0.1"
+edition = "2024"
+authors = ["José Gois <ze.gois.00@gmail.com>"]
+description = "computers library"
+documentation = "https://docs.rs/computers"
+repository = "https://github.com/ze-gois/rust_computers"
+readme = "README.md"
+homepage = "https://userspace.builders"
+license-file = "LICENSE"
+keywords = ["architecture", "hypervision", "operating_system", "virtualization", "emulation"]
+categories = ["no-std", "os"]
+publish = true
+exclude = []
+include = []
+rust-version = "1.85"
+autobins = true
+autotests = true
+autobenches = true
+resolver = "2"
+# license = "BSD-3 Clause"
+# links = ""
+
+[package.metadata]
+# mode = "unoticed"
+# note = "esta é uma crate padrão"
+# whatever = 42
+
+# [package.metadata.debug]
+# mode = "debug"
+
+[package.metadata.release]
+allow-branch = ["main", "release"]   # branches permitidas
+sign-commit = true                    # commits de release assinados
+sign-tag = true                       # tags assinadas
+push-remote = "origin"                # remoto padrão
+registry = "crates-io"                # publicando no crates.io
+release = true                        # ativa o release
+publish = true                        # publica no registry
+verify = true                          # roda cargo package --verify
+owners = ["ze-gois"]  # dono da crate
+push = true                             # envia commits/tags
+push-options = []                        # sem opções especiais
+shared-version = true                    # todas as crates sobem juntas
+consolidate-commits = true               # junta commits de release
+pre-release-commit-message = "chore(release): bump {{name}} to {{version}} ✨"
+pre-release-replacements = []            # vazio por enquanto
+pre-release-hook = "./pre_release.sh"  # hook customizado
+tag-message = "Release {{name}} v{{version}} – feito com amor ❤️"
+tag-prefix = "v"                         # prefixo de tag
+tag-name = "v{{version}}"                # nome final da tag
+tag = true                                # cria a tag
+enable-features = []                      # features habilitadas no release
+enable-all-features = false               # false para evitar builds gigantes
+dependent-version = "upgrade"             # depende das versões internas
+metadata = "optional"                     # metadata opcional
+target = ""                               # build padrão
+rate-limit = { requests = 1, seconds = 0 } # limite de requests
+certs-source = "webpki"                   # fonte de certificados
+# unstable = ""
+
+
+[lib]
+name = "computers"
+path = "src/library.rs"
+crate-type = ["lib"]
+test = false
+doctest = true
+bench = false
+required-features = []        # nenhuma feature obrigatória
+doc = true                     # gera docs
+
+[dependencies]
+
+[build-dependencies]
+cc = "1.0"
+
+[dev-dependencies]
+
+[features]
+default = []
+all = []
+
+[badges]
+github-actions = { repository = "ze-gois/rust_computers" }
+# # travis-ci = { repository = "ze-gois/rust_ample", branch = "main" }
+
+# [profile.dev]
+# opt-level = 0
+# debug = true
+# overflow-checks = true
+# lto = false
+# panic = "unwind"
+# incremental = true
+# codegen-units = 256
+# debug-assertions = true
+# split-debuginfo = "packed"
+
+# [profile.release]
+# opt-level = 3
+# debug = false
+# overflow-checks = true
+# lto = true
+# panic = "abort"
+# codegen-units = 1
+# incremental = false
+# debug-assertions = false
+# split-debuginfo = "unpacked"
+# rpath = false
+# strip = "debuginfo"
