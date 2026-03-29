@@ -1,0 +1,157 @@
+# vLLM run snippets and deployment examples
+#
+# Purpose:
+# - Quick, copy-paste friendly examples to run a vLLM inference server inside the guest VM
+#   which owns the passed-through NVIDIA GPU. Includes systemd unit, Docker example,
+#   recommended environment tuning and how to expose the service to the host (SSH tunnel / direct TCP).
+#
+# NOTES / placeholders:
+# - Replace /path/to/model by your model directory or model identifier.
+# - Replace usuario@VM_IP and VM_IP where needed.
+# - Adjust memory, vCPU and GPU settings for your specific model and GPU (RTX 3050, 6 GB).
+# - The examples assume the guest has working NVIDIA drivers + CUDA and that the GPU is visible with `nvidia-smi`.
+#
+# Basic vLLM serve (simple, foreground)
+# - Exposes an HTTP server (OpenAI-like) on port 8000
+# - Example shows GPU utilization tuning
+# - Run inside the guest
+python -m vllm serve /path/to/model \
+    --host 0.0.0.0 \
+    --port 8000 \
+    --log-level info \
+    --gpu-memory-utilization 0.85
+#
+# Explanation:
+# - --host 0.0.0.0  : listen on all interfaces (use with firewall or tunnel for security)
+# - --port 8000     : port exposed to host / network
+# - --gpu-memory-utilization : fraction of GPU memory vLLM should consider for allocations (tweak down for smaller VRAM)
+#
+# Environment variables recommended for better behavior with CUDA and multithreading:
+# Export these before starting the server (example for bash / systemd environment)
+# - Limit OpenMP threads (prevents CPU oversubscription)
+export OMP_NUM_THREADS=4
+# - Limit number of threads used by MKL or similar libs
+export MKL_NUM_THREADS=1
+# - Reduce CUDA kernel launches overhead for some workloads (optional)
+export NCCL_DEBUG=INFO
+# - Select GPU explicitly if needed (0 usually)
+export CUDA_VISIBLE_DEVICES=0
+#
+# Example: run with a specific Python venv (foreground)
+# source /opt/vllm-venv/bin/activate
+# cd /opt/models
+# CUDA_VISIBLE_DEVICES=0 OMP_NUM_THREADS=4 python -m vllm serve ./my_quant_model \
+#     --host 0.0.0.0 --port 8000 --gpu-memory-utilization 0.9
+#
+# Docker example (if you prefer containers inside the guest)
+# - Build or pull an image that has vLLM and CUDA configured (example placeholder)
+# - Map GPU via --gpus and map port 8000
+#
+# docker run --rm -it \
+#   --gpus '"device=0"' \
+#   -p 8000:8000 \
+#   -v /path/to/model:/models/model \
+#   -e OMP_NUM_THREADS=4 \
+#   vllm-cuda-image:latest \
+#   python -m vllm serve /models/model --host 0.0.0.0 --port 8000 --gpu-memory-utilization 0.85
+#
+# Systemd unit (recommended for production-like usage inside the guest VM)
+# - Create /etc/systemd/system/vllm.service with the content below (adjust paths and user)
+#
+# /etc/systemd/system/vllm.service
+# --------------------------------
+# [Unit]
+# Description=vLLM inference service
+# After=network.target
+#
+# [Service]
+# Type=simple
+# User=vllmuser
+# Group=vllmuser
+# Environment=CUDA_VISIBLE_DEVICES=0
+# Environment=OMP_NUM_THREADS=4
+# WorkingDirectory=/opt/models
+# ExecStart=/usr/bin/python -m vllm serve /opt/models/my_model --host 0.0.0.0 --port 8000 --gpu-memory-utilization 0.85
+# Restart=always
+# RestartSec=5
+# LimitNOFILE=65536
+#
+# [Install]
+# WantedBy=multi-user.target
+#
+# After creating the unit:
+# sudo systemctl daemon-reload
+# sudo systemctl enable --now vllm.service
+#
+# Health-check and testing from the host
+# 1) SSH tunnel (safe for early testing)
+#    From the host:
+#    ssh -L 8000:localhost:8000 usuario@VM_IP -N
+#    Then on the host:
+#    curl http://localhost:8000/health    # or appropriate health endpoint (vLLM exposes /v1/ endpoints when OpenAI compatibility is enabled)
+#
+# 2) Direct TCP (if VM has accessible IP and firewall rules permit)
+#    From the host:
+#    curl http://VM_IP:8000/health
+#
+# Example `curl` test for OpenAI-compatible API (adjust endpoint if different):
+# curl -X POST http://VM_IP:8000/v1/completions \
+#   -H "Content-Type: application/json" \
+#   -d '{"model":"my-model","prompt":"Hello world","max_tokens":16}'
+#
+# Security note:
+# - Don't expose port 8000 unrestricted on public networks. Use SSH tunnels, firewall rules, or TLS+auth proxied endpoints.
+#
+# MCP (Model Context Protocol) / Adapter notes
+# - If you need MCP compatibility (Anthropic's Model Context Protocol) and vLLM doesn't provide a native MCP endpoint,
+#   implement a small adapter service inside the guest that:
+#    1) accepts MCP connections/requests,
+#    2) translates them to the vLLM (OpenAI-like) HTTP API,
+#    3) forwards responses back to the MCP caller.
+# - The adapter can be a tiny FastAPI or Flask app that forwards requests; keep it bound to localhost and expose only via secure channels.
+#
+# Example minimal adapter sketch (conceptual)
+# ------------------------------------------------
+# from fastapi import FastAPI, Request
+# import requests
+#
+# app = FastAPI()
+# VLLM_URL = "http://localhost:8000/v1"
+#
+# @app.post("/mcp")
+# async def mcp_proxy(req: Request):
+#     payload = await req.json()
+#     # Convert MCP payload -> vLLM/OpenAI-compatible payload
+#     converted = convert_mcp_to_openai(payload)
+#     r = requests.post(f"{VLLM_URL}/completions", json=converted)
+#     return adapt_response_to_mcp(r.json())
+#
+# Run the adapter as a systemd service or behind a local socket; only expose the adapter through the same secure mechanisms described above.
+#
+# Performance tuning tips (RTX 3050, 6GB VRAM)
+# - Use quantized models (e.g., TurboQuant) so the working set fits GPU+host memory constraints.
+# - Set --gpu-memory-utilization lower (0.7-0.9) to give headroom for CUDA allocations.
+# - Enable hugepages on the host and (optionally) memoryBacking in the VM XML if you configured hugepages on the host.
+# - Monitor GPU usage with `nvidia-smi` inside the guest and adjust `gpu-memory-utilization`.
+# - Limit CPU threads for Python libs (OMP, MKL) to avoid interfering with host scheduling.
+#
+# Troubleshooting
+# - If `vllm` fails to detect GPU / CUDA runtime:
+#   * Confirm `nvidia-smi` inside the guest lists the GPU.
+#   * Verify CUDA toolkit & driver versions are compatible.
+#   * Check dmesg for VFIO errors on the host and journalctl for driver issues on the guest.
+# - If you see OOM on the GPU, reduce `--gpu-memory-utilization` or use a smaller/quantized model.
+# - If NVIDIA errors inside VM (Error 43), verify VM XML: CPU host-passthrough, kvm hidden, hyperv vendor_id tweaks.
+#
+# Logging / collecting diagnostics
+# - Collect these outputs when debugging:
+#   * inside guest: `nvidia-smi`, `dmesg | tail -n 200`, `journalctl -u vllm.service -b`
+#   * on host: `dmesg | grep -i vfio`, `journalctl -k | grep -i iommu`
+#
+# Example quick checklist to validate service:
+# - [ ] vLLM process running in the guest
+# - [ ] `nvidia-smi` shows processes (the vLLM server using the GPU)
+# - [ ] curl http://localhost:8000/health (via tunnel or direct) returns healthy
+# - [ ] Latency / throughput is within expectations for the chosen model
+#
+# End of snippet.

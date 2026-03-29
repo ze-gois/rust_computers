@@ -1,0 +1,120 @@
+# grub_cmds.txt
+# Snippet: instruções e comandos para ativar IOMMU no kernel (GRUB) — Arch Linux (host)
+#
+# Objetivo:
+# - Ativar IOMMU para permitir VFIO / PCI passthrough
+# - Dar exemplos para Intel e AMD
+# - Mostrar como editar com segurança, checar e regenerar o GRUB
+#
+# IMPORTANTE:
+# - Faça backup dos arquivos antes de editar:
+#   sudo cp /etc/default/grub /etc/default/grub.bak
+#   sudo cp /etc/mkinitcpio.conf /etc/mkinitcpio.conf.bak
+# - Se estiver usando Secure Boot, saiba que drivers assinados e módulos podem bloquear
+#   o carregamento de vfio-pci; considere desabilitar Secure Boot ou assinar modules apropriadamente.
+#
+# 1) Verifique o cmdline atual (para referência)
+cat /proc/cmdline
+#
+# 2) Exemplo de edição (arquivo: /etc/default/grub)
+#
+# Abra com seu editor preferido, por exemplo:
+# sudo nano /etc/default/grub
+#
+# Localize a linha:
+# GRUB_CMDLINE_LINUX_DEFAULT="...existing params..."
+#
+# Adicione os parâmetros de IOMMU conforme seu CPU:
+#
+# Para Intel (exemplo recomendado):
+#   intel_iommu=on iommu=pt
+#
+# Para AMD (exemplo recomendado):
+#   amd_iommu=on iommu=pt
+#
+# Parâmetros opcionais úteis:
+# - pcie_acs_override=downstream,multifunction
+#     (força isolamento de funções PCI quando necessário — USE COM CAUTELA,
+#      pode mascarar problemas reais de isolamento; último recurso)
+# - rd.driver.pre=vfio-pci
+#     (para initramfs: força carregamento do vfio-pci cedo — útil em alguns setups)
+# - iommu=soft
+#     (fallback software IOMMU — raramente desejado para passthrough real)
+#
+# Exemplo completo (Intel) — substitua existing params conforme necessário:
+# GRUB_CMDLINE_LINUX_DEFAULT="quiet loglevel=3 intel_iommu=on iommu=pt"
+#
+# Exemplo completo com ACS override (cuidado):
+# GRUB_CMDLINE_LINUX_DEFAULT="quiet intel_iommu=on iommu=pt pcie_acs_override=downstream,multifunction"
+#
+# 3) Salve o arquivo e regenere o config do GRUB
+#
+# No Arch (BIOS/UEFI padrão com grub instalado assim):
+sudo grub-mkconfig -o /boot/grub/grub.cfg
+#
+# Observação: em sistemas com ESP diferente (ex: /boot/efi), o comando acima ainda é
+# o gerador do grub.cfg, adapte conforme sua distro/instalação se necessário.
+#
+# 4) Regenerar initramfs (se você alterou módulos em mkinitcpio.conf)
+# - Se você planeja carregar vfio-pci no initramfs (recomendado para bind persistente):
+#   Edite /etc/mkinitcpio.conf e adicione na linha MODULES=(...):
+#     MODULES=(vfio_pci vfio vfio_iommu_type1)
+# - Depois regenere:
+sudo mkinitcpio -P
+#
+# 5) Reboot
+# - Após editar o grub e/ou initramfs:
+sudo reboot
+#
+# 6) Verificações pós-boot
+# - Confirme que o kernel recebeu os parâmetros:
+cat /proc/cmdline
+#
+# - Cheque mensagens do kernel:
+dmesg | grep -i -E "iommu|vfio|IOMMU|AMD-Vi|Intel-IOMMU"
+#
+# - Para verificar grupos IOMMU (útil para troubleshooting de passthrough):
+for g in /sys/kernel/iommu_groups/*; do
+  echo \"IOMMU Group: $(basename $g)\"; ls -l $g/devices; echo; done
+#
+# - Confirme que vfio-pci foi carregado (se fez bind via initramfs):
+lsmod | grep vfio
+#
+# 7) Dicas para editar de forma não destrutiva
+# - Faça as edições locais primeiro e teste sem reboot usando /proc/cmdline? (não possível; kernel cmdline exige reboot).
+# - Antes de reboot: tenha um live-USB à mão caso precise reverter.
+# - Teste em etapas: primeiro apenas habilite intel/amd_iommu e reinicie, confirme logs; depois faça bind/vfio.
+#
+# 8) Exemplos de comandos para inserir o parâmetro ao GRUB de forma segura (scriptable)
+# Nota: revise antes de rodar — estes exemplos tentam preservar o conteúdo existente.
+#
+# Exemplo: adicionar intel_iommu=on iommu=pt caso não exista (backup automático)
+# sudo cp /etc/default/grub /etc/default/grub.bak
+# sudo sed -i 's/GRUB_CMDLINE_LINUX_DEFAULT=\"\\(.*\\)\"/GRUB_CMDLINE_LINUX_DEFAULT=\"\\1 intel_iommu=on iommu=pt\"/' /etc/default/grub
+# sudo grub-mkconfig -o /boot/grub/grub.cfg
+#
+# Se precisar remover (reverter), restaure o backup:
+# sudo cp /etc/default/grub.bak /etc/default/grub
+# sudo grub-mkconfig -o /boot/grub/grub.cfg
+#
+# 9) Problemas comuns e soluções
+# - IOMMU não aparece no dmesg:
+#   * Verifique BIOS: VT-d (Intel) / SVM/AMD-Vi (AMD) ativo.
+#   * Verifique se kernel param escrito corretamente (sem typos).
+# - vfio-pci não é carregado cedo o suficiente:
+#   * Adicione vfio_pci vfio vfio_iommu_type1 em MODULES do mkinitcpio.conf e regenere initramfs.
+#   * Considere rd.driver.pre=vfio-pci no cmdline para alguns setups.
+# - Secure Boot bloqueando módulos:
+#   * Desabilite Secure Boot ou assine módulos (procedimento avançado).
+# - Error 43 na VM (NVIDIA):
+#   * Tipicamente relacionado a CPUID / KVM detectável pelo driver — ajustar XML da VM (host-passthrough, kvm hidden, hyperv vendor_id) e garantir CPU passthrough.
+#
+# 10) Referência rápida de checagens antes de prosseguir para bind -> VM
+# - lspci -nnk | grep -i -E 'vga|3d|nvidia' -A2
+# - dmesg | grep -i vfio
+# - cat /proc/cmdline
+# - for g in /sys/kernel/iommu_groups/*; do echo \"group: $(basename $g)\"; ls $g/devices; done
+#
+# -----------------------
+# Fim do snippet.
+# Substitua placeholders e adapte conforme sua distribuição / layout de boot.

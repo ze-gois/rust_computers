@@ -1,0 +1,168 @@
+<!--
+libvirt VM XML snippet for GPU passthrough (KVM/QEMU + VFIO + OVMF)
+Placeholders to replace:
+  - @DOMAIN_NAME@         : the VM's name
+  - @MEM_MB@              : memory in MiB (e.g. 16384)
+  - @VCPU@                : vCPU count (e.g. 8)
+  - @OVMF_CODE@/@OVMF_VARS@: paths to OVMF firmware for your distro
+  - GPU PCI addresses: domain/bus/slot/function (0x0000 / 0x01 / 0x00 / 0x0)
+  - AUDIO PCI address: usually bus same as GPU, function 0x1 (replace as needed)
+  - vendor_id value: a random 8-char hex string (avoid NVIDIA vendor detection)
+Notes:
+  - Keep this snippet as a template. Always replace placeholders before using.
+  - Use `host-passthrough` CPU mode and hide kvm to reduce the chance of NVIDIA Error 43.
+  - Confirm IOMMU groups and ensure the GPU is isolated in its own group or groups that can be passed together.
+  - This XML is intended as an example; adapt to your environment and libvirt/QEMU version.
+-->
+
+<domain type='kvm' xmlns:qemu='http://libvirt.org/schemas/domain/qemu/1.0'>
+  <name>@DOMAIN_NAME@</name>
+  <memory unit='MiB'>@MEM_MB@</memory>
+  <currentMemory unit='MiB'>@MEM_MB@</currentMemory>
+  <vcpu placement='static'>@VCPU@</vcpu>
+
+  <!-- Use host CPU attributes for maximum compatibility with GPU drivers -->
+  <cpu mode='host-passthrough' check='none'>
+    <!-- Optional: restrict topology if needed
+    <topology sockets='1' cores='@VCPU@' threads='1'/>
+    -->
+  </cpu>
+
+  <!-- Hide KVM presence from guest and set Hyper-V vendor id to avoid NVidia Error 43 -->
+  <kvm>
+    <hidden state='on'/>
+  </kvm>
+
+  <features>
+    <acpi/>
+    <apic/>
+    <hyperv>
+      <!-- Replace the vendor_id value with a random 8-character hex string -->
+      <vendor_id state='on' value='12345678'/>
+      <!-- Optional Hyper-V feature toggles (tune depending on guest OS) -->
+      <relaxed state='on'/>
+      <vapic state='on'/>
+      <spinlocks state='on' retries='4096'/>
+    </hyperv>
+  </features>
+
+  <!-- Use OVMF (UEFI) firmware; replace paths with your system's OVMF code / vars images -->
+  <os>
+    <type arch='x86_64' machine='q35'>hvm</type>
+    <loader readonly='yes' type='pflash'>@OVMF_CODE@</loader>
+    <nvram>@OVMF_VARS@</nvram>
+  </os>
+
+  <!-- Memory backing: hugepages can improve performance for LLM inference -->
+  <!-- Uncomment and adapt if you have hugepages configured on the host -->
+  <!--
+  <memoryBacking>
+    <hugepages>
+      <page size='2048' unit='KiB'/>
+    </hugepages>
+    <locked/>
+  </memoryBacking>
+  -->
+
+  <on_poweroff>destroy</on_poweroff>
+  <on_reboot>restart</on_reboot>
+  <on_crash>restart</on_crash>
+
+  <devices>
+    <!-- Example disk: use virtio-blk or virtio-scsi for best perf -->
+    <disk type='file' device='disk'>
+      <driver name='qemu' type='qcow2' cache='none' io='native'/>
+      <source file='/var/lib/libvirt/images/@DOMAIN_NAME@.qcow2'/>
+      <target dev='vda' bus='virtio'/>
+      <address type='pci' domain='0x0000' bus='0x00' slot='0x05' function='0x0'/>
+    </disk>
+
+    <!-- Network: default NAT network; replace or configure bridge if you need LAN access -->
+    <interface type='network'>
+      <source network='default'/>
+      <model type='virtio'/>
+    </interface>
+
+    <!-- Serial / Console -->
+    <serial type='pty'>
+      <target port='0'/>
+    </serial>
+    <console type='pty'>
+      <target type='serial' port='0'/>
+    </console>
+
+    <!-- Input / Display -->
+    <!-- No emulated GPU is provided; if you need a virtual display add a simple cirrus or qxl device.
+         For headless inference VMs it's common to omit a paravirtual video device. -->
+    <input type='tablet' bus='usb'/>
+
+    <!-- RNG device: improves entropy in guests -->
+    <rng model='virtio'>
+      <backend model='random'>/dev/urandom</backend>
+    </rng>
+
+    <!-- Memory ballooning disabled for predictable memory sizing in inference workloads -->
+    <memballoon model='none'/>
+
+    <!--
+      Hostdev entries for GPU passthrough.
+      IMPORTANT:
+      - Replace the address values with the exact domain/bus/slot/function from `lspci`.
+      - Include both the GPU PCI function (commonly .0) and the associated audio/function (.1).
+      - `managed='yes'` allows libvirt to unbind/bind drivers as needed.
+      - If your GPU spans multiple IOMMU groups you may need to pass all devices in those groups.
+    -->
+
+    <!-- NVIDIA GPU (VGA) -->
+    <hostdev mode='subsystem' type='pci' managed='yes'>
+      <driver name='vfio'/>
+      <source>
+        <address domain='0x0000' bus='0x01' slot='0x00' function='0x0'/>
+      </source>
+      <!-- Optional: give the guest a friendly name for the device -->
+      <address type='pci' domain='0x0000' bus='0x00' slot='0x08' function='0x0'/>
+    </hostdev>
+
+    <!-- NVIDIA GPU Audio (replace addresses accordingly) -->
+    <hostdev mode='subsystem' type='pci' managed='yes'>
+      <driver name='vfio'/>
+      <source>
+        <address domain='0x0000' bus='0x01' slot='0x00' function='0x1'/>
+      </source>
+      <address type='pci' domain='0x0000' bus='0x00' slot='0x09' function='0x0'/>
+    </hostdev>
+
+    <!-- Optional USB controller passthrough (useful for USB dongles / peripherals) -->
+    <!--
+    <hostdev mode='subsystem' type='pci' managed='yes'>
+      <source>
+        <address domain='0x0000' bus='0x00' slot='0x14' function='0x0'/>
+      </source>
+    </hostdev>
+    -->
+
+    <!-- If you require a virtual display for the guest (for testing), add a simple video device:
+    <video>
+      <model type='virtio' heads='1'/>
+    </video>
+    -->
+
+    <!-- QEMU commandline additions (namespace qemu) can be used for fine-grained tuning.
+         Example: expose host CPU features, or attach a nvram workaround.
+         Be cautious: incorrect qemu:commandline entries may break the domain. -->
+    <qemu:commandline>
+      <!-- Example: set a random vendor id (match hyperv vendor_id above) -->
+      <!--
+      <qemu:arg value='-cpu'/>
+      <qemu:arg value='host,policy=prefer'/>
+      -->
+      <!-- Example: set hugepage backing on a specific memory device (requires matching host config)
+      <qemu:arg value='-object'/>
+      <qemu:arg value='memory-backend-file,id=mem0,mem-path=/dev/hugepages,share=on,size=@MEM_MB@M'/>
+      <qemu:arg value='-numa'/>
+      <qemu:arg value='node,memdev=mem0'/>
+      -->
+    </qemu:commandline>
+
+  </devices>
+</domain>

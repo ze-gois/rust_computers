@@ -1,0 +1,105 @@
+# vfio_conf.txt
+#
+# Snippet exemplo para /etc/modprobe.d/vfio.conf
+# Objetivo: instruções e exemplo para reservar dispositivos NVIDIA (VGA + Audio)
+#           para o driver vfio-pci no boot (persistente).
+#
+# ATENÇÃO:
+# - Substitua os placeholders (10de:25a2 e 10de:10f0 / vendor:device) pelos IDs reais
+#   obtidos via `lspci -nn`.
+# - Faça backup dos arquivos antes de alterar (ex.: sudo cp /etc/modprobe.d/vfio.conf /etc/modprobe.d/vfio.conf.bak).
+# - Se usar Secure Boot, carregar módulos externos pode falhar; considere desabilitar Secure Boot
+#   ou assinar os módulos (procedimento avançado).
+#
+# Exemplo mínimo (replace pelos seus IDs):
+#
+# options vfio-pci ids=10de:25a2,10de:10f0
+# softdep nvidia pre: vfio-pci
+#
+# Explicação:
+# - `options vfio-pci ids=...` -> informa ao módulo `vfio-pci` que ele "possui" os dispositivos
+#    com esses vendor:device IDs (hex). Normalmente você inclui tanto a função VGA (ex: 01:00.0)
+#    quanto o endpoint de áudio (ex: 01:00.1) da mesma GPU.
+# - `softdep nvidia pre: vfio-pci` -> tenta forçar que `vfio-pci` seja carregado antes do driver
+#    `nvidia` (ajuda a evitar race conditions no boot). Ajuste conforme a sua distro/stack.
+#
+# Como obter seus IDs (exemplo rápido):
+# 1) Liste dispositivos NVIDIA:
+#    lspci -nn | grep -i -E "nvidia|vga|3d|display" -A2
+#
+# 2) Saída típica:
+#    01:00.0 VGA compatible controller [0300]: NVIDIA Corporation Device [10de:25a2] (rev a1)
+#    01:00.1 Audio device [0403]: NVIDIA Corporation Device [10de:10f0]
+#
+# 3) Os IDs que vão em `ids=` são os valores dentro dos colchetes: `10de:25a2` e `10de:10f0`.
+#
+# Exemplo completo com comentários:
+#
+# -------------------------
+# /etc/modprobe.d/vfio.conf
+# -------------------------
+# # Bind persistente do dispositivo NVIDIA ao vfio-pci
+# # Substitua os IDs abaixo pelos seus reais (VGA e ÁUDIO)
+# options vfio-pci ids=10de:25a2,10de:10f0
+#
+# # Sugestão: carregar vfio-pci antes do driver nvidia (soft dependency)
+# softdep nvidia pre: vfio-pci
+#
+# # Opcional: force driver override para módulos que possam tentar tomar o device
+# # (muito use-case específico; prefira configurar via initramfs para persistência:)
+# # install nvidia /bin/true
+#
+# -------------------------
+#
+# Alternativa: usar driver_override via sysfs (dinâmico / temporário)
+# (útil para testes sem reboot; NÃO persistente)
+#
+# PCI_ADDR=0000:01:00.0   # substitua com o endereço PCI real
+# echo $PCI_ADDR | sudo tee /sys/bus/pci/devices/$PCI_ADDR/driver/unbind
+# echo vfio-pci | sudo tee /sys/bus/pci/devices/$PCI_ADDR/driver_override
+# echo $PCI_ADDR | sudo tee /sys/bus/pci/drivers/vfio-pci/bind
+#
+# Observações sobre initramfs / early binding (recomendado)
+# - Em muitos setups é preferível incluir `vfio_pci vfio vfio_iommu_type1` em MODULES do initramfs
+#   (ex.: /etc/mkinitcpio.conf no Arch). Assim o vfio-pci é carregado cedo e toma posse dos
+#   dispositivos antes que drivers proprietários sejam probed.
+#
+#   Exemplo (mkinitcpio.conf):
+#   MODULES=(vfio_pci vfio vfio_iommu_type1)
+#   sudo mkinitcpio -P
+#
+# - Em sistemas Debian/Ubuntu com initramfs-tools (ou dracut), pesquise a forma equivalente
+#   para carregar módulos no initramfs.
+#
+# Verificações pós-boot
+# - Confirmar que vfio-pci está carregado:
+#     lsmod | grep vfio
+#
+# - Confirmar que o dispositivo está bound ao vfio-pci:
+#     lspci -nnk -s 0000:01:00.0
+#     # procure por "Kernel driver in use: vfio-pci"
+#
+# - Dmesg para mensagens relacionadas:
+#     dmesg | grep -i -E "vfio|vfio-pci|iommu|IOMMU"
+#
+# Notas sobre Error 43 (NVIDIA dentro da VM)
+# - Esse arquivo apenas assegura que a GPU seja entregue ao vfio-pci no host.
+# - Error 43 (NVIDIA) tipicamente ocorre dentro do guest quando a GPU detecta que
+#   está sendo virtualizada. Corrija isso configurando:
+#   * CPU mode='host-passthrough' no XML da VM
+#   * ocultar KVM: <kvm><hidden state='on'/></kvm>
+#   * hyperv vendor_id randomizado no XML: <hyperv><vendor_id state='on' value='12345678'/></hyperv>
+# - Consulte `docs/snippets/libvirt_snippet.xml` para um exemplo.
+#
+# Segurança e riscos
+# - Reservar a GPU ao vfio-pci significa que o host NÃO poderá usar essa GPU enquanto o vfio
+#   mantiver o device bound. Garanta que o host tenha outra GPU (iGPU) para display se necessário.
+# - Se o host depender da GPU para iniciar a sessão gráfica, configurar isso sem um plano de
+#   recuperação pode deixar o sistema sem interface. Tenha um live-USB pronto.
+#
+# Mensagem curta para copiar/colar (substitua valores):
+#
+# options vfio-pci ids=10de:25a2,10de:10f0
+# softdep nvidia pre: vfio-pci
+#
+# Fim do snippet.

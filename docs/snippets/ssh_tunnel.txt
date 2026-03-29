@@ -1,0 +1,209 @@
+# ssh_tunnel.txt
+#
+# Snippet: SSH tunnels for exposing/consuming services between host and VM
+#
+# Purpose:
+# - Quick reference for establishing secure SSH tunnels between host and guest VM.
+# - Examples include local forwarding, remote forwarding, dynamic (SOCKS) proxy and persistent tunnels (autossh/systemd).
+# - Replace placeholders (USER, VM_IP, PORTS, SERVICE_HOST) with your real values.
+
+########################################################################
+# 1) Basic local port forwarding (host -> VM service via SSH)
+#
+# Use this on the host to forward a local port (8000) to the VM's localhost:8000.
+# This is useful when the VM listens only on localhost or when you want to avoid exposing the port on the VM network.
+#
+# Command:
+ssh -L 8000:localhost:8000 usuario@VM_IP -N -f -o ExitOnForwardFailure=yes
+#
+# Flags:
+# - -L local_port:host:hostport  (bind local_port on the client to host:hostport on the remote)
+# - -N run no remote command (useful for port forwarding only)
+# - -f fork to background after asking for password (or when using keys)
+# - -o ExitOnForwardFailure=yes  ensures ssh exits if forwarding fails (safe for scripts)
+#
+# Example usage:
+# - Start tunnel on host:
+#   ssh -L 8000:localhost:8000 ze@192.168.122.10 -N -f -o ExitOnForwardFailure=yes
+# - Then on host test:
+#   curl http://localhost:8000/health
+
+########################################################################
+# 2) Bind local port to VM interface (access VM service from other hosts)
+#
+# By default -L binds to localhost only. To expose on all interfaces of the host:
+#
+ssh -L 0.0.0.0:8000:localhost:8000 usuario@VM_IP -N -f -o ExitOnForwardFailure=yes
+#
+# NOTE: Exposing to 0.0.0.0 allows other machines to reach the forwarded port on the host.
+# Use firewall rules to restrict access (recommended) and prefer using localhost binding for testing.
+
+########################################################################
+# 3) Remote port forwarding (VM -> host service)
+#
+# Use this when the VM needs to expose a local guest service to be accessible on the host (or other network).
+# Example: the VM creates a tunnel so the host can access a service running on the host's port 9000 via VM's port 9000.
+#
+# Command (run on VM or using -R from host):
+ssh -R 9000:localhost:9000 usuario@HOST_IP -N -f -o ExitOnForwardFailure=yes
+#
+# Reverse example (from the host, asking VM to listen for remote connections):
+# (This requires AllowTcpForwarding yes on the SSH server and GatewayPorts if binding to non-localhost)
+ssh -R 127.0.0.1:9000:localhost:9000 usuario@VM_IP -N -f -o ExitOnForwardFailure=yes
+#
+# Caveat: remote forwarding requires server-side config: `AllowTcpForwarding yes` and possibly `GatewayPorts` in sshd_config.
+
+########################################################################
+# 4) Dynamic port forwarding (SOCKS proxy)
+#
+# Creates a local SOCKS5 proxy that routes TCP through the SSH connection.
+#
+ssh -D 1080 usuario@VM_IP -N -f
+#
+# Use case:
+# - Configure your browser or curl (with proxy) to use SOCKS5 localhost:1080
+# - Useful for routing multiple connections through the VM (or the host) without per-port forwarding
+
+########################################################################
+# 5) Persistent tunnels: autossh
+#
+# autossh monitors and restarts dropped SSH tunnels. Install autossh on the machine that initiates the tunnel.
+#
+# Simple command:
+autossh -M 0 -f -N -o "ServerAliveInterval 30" -o "ServerAliveCountMax 3" -L 8000:localhost:8000 usuario@VM_IP
+#
+# Notes:
+# - -M 0 disables the built-in monitoring port and relies on ServerAlive* options
+# - Use key-based authentication for non-interactive startup
+# - Test your command manually before running via autossh or systemd
+
+########################################################################
+# 6) Systemd unit for a persistent autossh tunnel (Host -> VM)
+#
+# Create /etc/systemd/system/ssh-tunnel-vllm.service with content below, adjust user and ExecStart.
+#
+# /etc/systemd/system/ssh-tunnel-vllm.service
+# -----------------------------------------
+# [Unit]
+# Description=Persistent SSH tunnel for vLLM (host -> VM)
+# After=network-online.target
+# Wants=network-online.target
+#
+# [Service]
+# Type=simple
+# User=yourlocaluser
+# Environment="AUTOSSH_GATETIME=0"
+# ExecStart=/usr/bin/autossh -M 0 -N -o "ServerAliveInterval 30" -o "ServerAliveCountMax 3" -L 8000:localhost:8000 usuario@VM_IP
+# Restart=always
+# RestartSec=5
+#
+# [Install]
+# WantedBy=multi-user.target
+#
+# Commands to enable:
+# sudo systemctl daemon-reload
+# sudo systemctl enable --now ssh-tunnel-vllm.service
+
+########################################################################
+# 7) Systemd unit for plain ssh tunnel (no autossh)
+#
+# Use ExecStart with ssh and -o ExitOnForwardFailure=yes; Restart ensures re-establishing on failure.
+#
+# /etc/systemd/system/ssh-tunnel-simple.service
+# --------------------------------------------
+# [Unit]
+# Description=SSH tunnel (simple) for vLLM
+# After=network-online.target
+#
+# [Service]
+# Type=simple
+# User=yourlocaluser
+# ExecStart=/usr/bin/ssh -L 8000:localhost:8000 usuario@VM_IP -N -o ExitOnForwardFailure=yes -o ServerAliveInterval=30 -o ServerAliveCountMax=3
+# Restart=on-failure
+# RestartSec=5
+#
+# [Install]
+# WantedBy=multi-user.target
+
+########################################################################
+# 8) Using SSH config (~/.ssh/config) to simplify commands
+#
+# Add an entry for the VM to avoid typing full commands:
+#
+# Host vm-infer
+#   HostName 192.168.122.10
+#   User ze
+#   IdentityFile ~/.ssh/id_rsa_vmlab
+#   ServerAliveInterval 30
+#   ServerAliveCountMax 3
+#
+# Then use:
+ssh -L 8000:localhost:8000 vm-infer -N -f
+
+########################################################################
+# 9) Secure defaults & best practices
+#
+# - Use key-based authentication (no password) and disable password authentication on servers when possible.
+# - Use -o ExitOnForwardFailure=yes in scripts so SSH fails fast if a forward cannot be created.
+# - Prefer binding to localhost (127.0.0.1) unless you explicitly need remote access.
+# - Restrict which users can forward ports via sshd_config (AllowTcpForwarding).
+# - If exposing a host-local port to other machines, protect it with firewall rules (ufw/iptables/nft).
+# - Consider TLS + auth or an authenticated proxy in front of the service for additional protection.
+# - Use `GatewayPorts no` (default) on SSH server to avoid accidental exposure; set `GatewayPorts clientspecified` if you need to listen on non-localhost addresses.
+
+########################################################################
+# 10) Testing & troubleshooting
+#
+# - Confirm SSH connectivity:
+ssh usuario@VM_IP 'echo connected && uname -a'
+#
+# - Confirm the tunnel is up:
+#   On the host: ss -ltnp | grep :8000
+#   OR: netstat -tlnp | grep 8000
+#
+# - If you cannot reach the forwarded port:
+#   * Verify the ssh process is running (`ps aux | grep ssh`)
+#   * Ensure firewall on host/VM allows the connection (if binding non-localhost)
+#   * Check sshd logs on server (e.g. `journalctl -u sshd`)
+#   * Use `ssh -vvv` to get verbose output when establishing the tunnel
+#
+# - Check the service inside the VM:
+ssh usuario@VM_IP 'curl -sS http://localhost:8000/health || echo SERVICE-DOWN'
+#
+# - Confirm nmap/iptables on the host/VM are not blocking:
+#   sudo iptables -L -n
+#   sudo nft list ruleset
+
+########################################################################
+# 11) Example: MCP-specific note
+#
+# If the inference service implements MCP on port 8501 inside the VM, forward accordingly:
+# Host -> VM (local forward):
+ssh -L 8501:localhost:8501 usuario@VM_IP -N -f -o ExitOnForwardFailure=yes
+# Now point host MCP client to http://localhost:8501
+#
+# Consider running a small TLS-terminating reverse proxy on the host (or the VM) if you need encrypted authentication for MCP traffic across networks.
+
+########################################################################
+# 12) Quick-reference commands
+#
+# Local forward (host): forward host:8000 -> VM:8000
+# ssh -L 8000:localhost:8000 usuario@VM_IP -N -f -o ExitOnForwardFailure=yes
+#
+# Remote forward (VM listens for incoming connections forwarded to host):
+# ssh -R 9000:localhost:9000 usuario@VM_IP -N -f -o ExitOnForwardFailure=yes
+#
+# Dynamic SOCKS proxy:
+# ssh -D 1080 usuario@VM_IP -N -f
+#
+# Persistent with autossh:
+# autossh -M 0 -N -f -L 8000:localhost:8000 usuario@VM_IP
+
+########################################################################
+# 13) Final notes
+#
+# - Always test manually before configuring systemd/autossh for production use.
+# - Keep credentials/keys secure and rotate them periodically.
+# - Log tunnel status and failures to help diagnose intermittent network issues.
+#
+# End of snippet.

@@ -1,0 +1,70 @@
+# lspci_cmds.txt
+# Snippets úteis para identificar a GPU NVIDIA e os IDs PCI (VGA + áudio)
+# Use estes comandos no host para coletar as informações necessárias para VFIO / passthrough.
+
+# 1) Lista rápida filtrada — procura por NVIDIA, VGA, 3D ou Display
+lspci -nn | grep -i -E "nvidia|vga|3d|display" -A2
+
+# Exemplo de saída:
+# 01:00.0 VGA compatible controller [0300]: NVIDIA Corporation Device [10de:25a2] (rev a1)
+# 01:00.1 Audio device [0403]: NVIDIA Corporation Device [10de:10f0]
+
+# 2) Ver drivers e o kernel driver em uso (útil para confirmar se device está bound ao vfio-pci)
+lspci -nnk | grep -i -A3 "01:00.0"   # substitua 01:00.0 pelo endereço PCI real
+# ou para ver todos
+lspci -nnk
+
+# 3) Visualização em árvore (mostra as hierarquias PCI)
+lspci -tv
+
+# 4) Informações detalhadas de um dispositivo específico
+# substitua 0000:01:00.0 pelo endereço PCI que você obteve
+lspci -s 0000:01:00.0 -vvv
+
+# 5) Extrair somente os endereços e IDs (útil para criar /etc/modprobe.d/vfio.conf)
+# mostra linhas com endereço PCI e vendor:device
+lspci -nn | grep -i nvidia -A1
+
+# comando que extrai vendor:device (formato 10de:25a2) e o endereço PCI:
+lspci -nn | grep -i nvidia -A1 | awk '/^[0-9a-f:.]+/ { addr=$1 } /[0-9a-f]{4}:[0-9a-f]{4}/ { print addr, $0 }'
+
+# 6) Coletar vendor:device IDs explicitamente (útil para a entrada ids= em vfio.conf)
+# Exemplo: retorna "10de:25a2 10de:10f0" — substitua conforme saída real
+lspci -nn | awk -F ' ' '/NVIDIA/ { print $1, $0 }' | sed -n 's/.*\[\([0-9a-f:]\+\)\].*/\1/p' | uniq
+
+# Alternativa (mais direta): pegue os IDs a partir do endereço PCI
+# substitua 0000:01:00.0 / 0000:01:00.1 pelos seus devices
+cat /sys/bus/pci/devices/0000:01:00.0/vendor  # ex: 0x10de
+cat /sys/bus/pci/devices/0000:01:00.0/device  # ex: 0x25a2
+
+# 7) Listar grupos IOMMU (importante para verificar isolation e quais devices se movem juntos)
+for g in /sys/kernel/iommu_groups/*; do
+  echo "IOMMU Group: $(basename $g)";
+  ls -l $g/devices;
+  echo "";
+done
+
+# 8) Mostrar o driver atualmente associado (útil depois de bind/unbind)
+# substitua o endereço PCI
+readlink /sys/bus/pci/devices/0000:01:00.0/driver || echo "sem driver associado"
+
+# 9) Unbind / bind manual (apenas para testes; preferível configurar via initramfs para persistência)
+# ATENÇÃO: usar com cuidado — pode travar X/Wayland se GPU for usada pelo host.
+# substituir PCI_ADDR e driver conforme o caso
+PCI_ADDR=0000:01:00.0
+echo $PCI_ADDR | sudo tee /sys/bus/pci/devices/$PCI_ADDR/driver/unbind
+echo vfio-pci | sudo tee /sys/bus/pci/devices/$PCI_ADDR/driver_override
+echo $PCI_ADDR | sudo tee /sys/bus/pci/drivers/vfio-pci/bind
+
+# 10) Notas rápidas e boas práticas
+# - Normalmente você precisa dos IDs de ambos os dispositivos: VGA (01:00.0) e áudio (01:00.1).
+# - Substitua os placeholders (endereço PCI e IDs) pelos valores reais antes de editar /etc/modprobe.d/vfio.conf.
+# - Faça backup de /etc/default/grub e /etc/mkinitcpio.conf antes de alterar o kernel cmdline ou os módulos.
+# - Colete e salve a saída dos comandos acima (em um arquivo) para referência ao criar a VM:
+#   sudo lspci -nnk > ~/lspci-before-vfio.txt
+#   sudo dmesg | tail -n 200 > ~/dmesg-after-bind.txt
+#
+# - Se o host usa a GPU para display, não tente fazer passthrough sem garantir que o host tenha outra saída (iGPU).
+# - Verifique `dmesg | grep -i vfio` após reboot para confirmar que VFIO carregou corretamente.
+#
+# Fim do snippet.

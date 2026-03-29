@@ -1,0 +1,106 @@
+# mkinitcpio_conf.txt
+#
+# Snippet: how to add VFIO modules to /etc/mkinitcpio.conf on Arch Linux
+# Purpose: ensure vfio-pci (and related vfio modules) are loaded early in the initramfs
+# so devices (GPU + audio endpoints) can be bound to vfio before native drivers probe them.
+#
+# IMPORTANT:
+# - Always backup the original file before editing:
+#     sudo cp /etc/mkinitcpio.conf /etc/mkinitcpio.conf.bak
+# - If you use Secure Boot you'll need to sign modules or disable Secure Boot (otherwise
+#   the early loading of unsigned modules may be blocked).
+# - Replace placeholders in other snippets (vfio ids, PCI addresses) with values from your hardware.
+#
+# 1) Minimal example: add VFIO modules to MODULES
+#
+# Open /etc/mkinitcpio.conf and find the MODULES line. Make it include:
+#
+# MODULES=(vfio_pci vfio vfio_iommu_type1)
+#
+# Example full context (only the relevant part shown):
+#
+# MODULES=(vfio_pci vfio vfio_iommu_type1)
+# BINARIES=()
+# FILES=()
+# HOOKS=(base udev autodetect modconf block filesystems keyboard fsck)
+#
+# Notes:
+# - Order of MODULES generally doesn't matter, but `vfio_pci` is the module that will
+#   take ownership of PCI devices, and `vfio_iommu_type1` is required for IOMMU support.
+# - Do NOT remove essential hooks needed to boot (leave `base`, `udev`, `filesystems`, etc).
+#
+# 2) Optional: ensure vfio is preferred before other drivers
+#
+# In some advanced setups people add a kernel cmdline like:
+#   rd.driver.pre=vfio-pci
+# or add `rd.driver.pre=vfio-pci` to their initramfs generation parameters (dracut-style).
+# For mkinitcpio this is usually unnecessary if MODULES contains vfio modules because the
+# modules will be included in the initramfs and load early. Use rd.driver.pre only if
+# you know your distribution/initramfs requires it.
+#
+# 3) Regenerate initramfs
+#
+# After editing `/etc/mkinitcpio.conf` regenerate images:
+#
+#   sudo mkinitcpio -P
+#
+# This will rebuild all installed initramfs images (for each kernel).
+#
+# 4) Reboot and verify
+#
+# Reboot the host and check:
+#
+#   - Confirm kernel cmdline (optional):
+#       cat /proc/cmdline
+#
+#   - Check the vfio-related modules are loaded:
+#       lsmod | grep vfio
+#
+#   - Confirm the GPU devices are bound to vfio-pci (replace PCI_ADDR accordingly):
+#       lspci -nnk -s 0000:01:00.0
+#       # look for: Kernel driver in use: vfio-pci
+#
+#   - Check dmesg for IOMMU / VFIO messages:
+#       dmesg | grep -i -E "vfio|vfio-pci|iommu|IOMMU|AMD-Vi|Intel-IOMMU"
+#
+# 5) Troubleshooting tips
+#
+# - If the host still binds the NVIDIA driver on boot, ensure:
+#     * You added the correct vendor:device IDs in /etc/modprobe.d/vfio.conf (see vfio_conf.txt).
+#     * You rebuilt initramfs after editing /etc/mkinitcpio.conf.
+#     * Secure Boot isn't blocking unsigned modules (either sign or disable).
+#
+# - For testing without reboot you can do a manual (temporary) unbind/bind (only for short tests):
+#     PCI_ADDR=0000:01:00.0
+#     echo $PCI_ADDR | sudo tee /sys/bus/pci/devices/$PCI_ADDR/driver/unbind
+#     echo vfio-pci | sudo tee /sys/bus/pci/devices/$PCI_ADDR/driver_override
+#     echo $PCI_ADDR | sudo tee /sys/bus/pci/drivers/vfio-pci/bind
+#   WARNING: unbinding a GPU in use by the host will crash your graphical session. Use only on a headless host
+#   or when the host is using another GPU (iGPU).
+#
+# - If vfio modules are missing from the initramfs for some reason, re-check syntax in /etc/mkinitcpio.conf
+#   and ensure you're editing the right file for the kernel you're booting.
+#
+# 6) Alternatives and distribution notes
+#
+# - dracut-based distros (Fedora, some enterprise) use different tooling; the equivalent is to add
+#   vfio modules to dracut configuration or use kernel cmdline `rd.driver.pre=vfio-pci`.
+# - On Debian/Ubuntu with initramfs-tools you would add modules to `/etc/initramfs-tools/modules` and run
+#   `sudo update-initramfs -u`.
+#
+# 7) Example final checklist before reboot:
+#
+# - Backup:
+#     sudo cp /etc/mkinitcpio.conf /etc/mkinitcpio.conf.bak
+# - Edit:
+#     MODULES=(vfio_pci vfio vfio_iommu_type1)
+# - Rebuild initramfs:
+#     sudo mkinitcpio -P
+# - Reboot:
+#     sudo reboot
+# - Post-boot checks:
+#     lsmod | grep vfio
+#     lspci -nnk -s <PCI_ADDR>   # confirm Kernel driver in use: vfio-pci
+#     dmesg | grep -i vfio
+#
+# End of snippet.
