@@ -1,0 +1,21 @@
+name: no_std
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  no-std:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: rust-src
+      - name: Check bare-metal target
+        run: cargo check --lib --target x86_64-unknown-none -Z build-std=core
