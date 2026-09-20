@@ -83,12 +83,12 @@ required-features = []        # nenhuma feature obrigatória
 doc = true                     # gera docs
 
 [dependencies]
-userspace = { version = "0.2.1" }
-ample = { version = "0.2.1" }
+userspace = { version = "0.2.2" }
+ample = { version = "0.2.2" }
 
 [build-dependencies]
 cc = "1.0"
-userspace_build = { version = "0.2.1" }
+userspace_build = { version = "0.2.2" }
 
 [dev-dependencies]
 
