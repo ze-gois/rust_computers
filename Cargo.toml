@@ -1,6 +1,6 @@
 [package]
 name = "computers"
-version = "0.0.1"
+version = "0.2.2"
 edition = "2024"
 authors = ["José Gois <ze.gois.00@gmail.com>"]
 description = "computers library"
@@ -71,10 +71,24 @@ bench = false
 required-features = []        # nenhuma feature obrigatória
 doc = true                     # gera docs
 
+
+[[bin]]
+name = "computers"
+path = "src/entry.rs"
+# crate-type = ["bin"]
+test = false
+doctest = true
+bench = false
+required-features = []        # nenhuma feature obrigatória
+doc = true                     # gera docs
+
 [dependencies]
+userspace = { version = "0.2.1" }
+ample = { version = "0.2.1" }
 
 [build-dependencies]
 cc = "1.0"
+userspace_build = { version = "0.2.1" }
 
 [dev-dependencies]
 
