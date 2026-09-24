@@ -1,6 +1,6 @@
 [package]
 name = "computers"
-version = "0.2.2"
+version = "0.2.3"
 edition = "2024"
 authors = ["José Gois <ze.gois.00@gmail.com>"]
 description = "computers library"
@@ -83,12 +83,12 @@ required-features = []        # nenhuma feature obrigatória
 doc = true                     # gera docs
 
 [dependencies]
-userspace = { version = "0.2.2" }
-ample = { version = "0.2.2" }
+userspace = { version = "0.2.3" }
+ample = { version = "0.2.3" }
 
 [build-dependencies]
 cc = "1.0"
-userspace_build = { version = "0.2.2" }
+userspace_build = { version = "0.2.3" }
 
 [dev-dependencies]
 
