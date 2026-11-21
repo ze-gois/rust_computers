@@ -95,6 +95,8 @@ userspace_build = { version = "0.2.3" }
 [features]
 default = []
 all = []
+# Host collection uses std, but the core library remains no_std.
+host-linux = []
 
 [badges]
 github-actions = { repository = "ze-gois/rust_computers" }
