@@ -37,6 +37,26 @@ The crate's scope includes areas such as:
 
 Concrete APIs are added only as the corresponding implementation becomes real.
 
+## Host hardware inventory (Linux)
+
+The `hardware` module provides borrowed, allocation-free device descriptions and
+`Inventory::write_log(&mut impl core::fmt::Write)`, independent of a logging library.
+Enable `host-linux` on a Linux host to collect an owned `Snapshot` from
+`/proc/cpuinfo`, `/proc/meminfo`, and PCI, block and power-supply sysfs devices.
+
+```sh
+cargo run --example host_hardware --features host-linux --target x86_64-unknown-linux-gnu
+```
+
+The example prints a deterministic text inventory suitable for logs. This describes
+kernel-visible hardware, not a physically exhaustive inventory. PCI IDs are
+reported as IDs, rather than guessed human-readable model names. Collection does
+not require root, but individual properties may be omitted when unreadable.
+No serial numbers, network addresses or disk contents are collected.
+
+The example uses a hosted Linux target to avoid the repository's default
+freestanding target. The original freestanding binary is unchanged.
+
 ## Ecosystem
 
 - Ecosystem: https://userspace.party
